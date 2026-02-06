@@ -1,0 +1,59 @@
+{
+  "username": "vedika",
+  "password": "test123",
+  "profile": {
+    "monthly_income": 3000,
+    "monthly_budget": 2500,
+    "savings_goal": 500
+  },
+  "accounts": {
+    "checking_balance": 1850.75,
+    "savings_balance": 4200.0
+  },
+  "transactions": [
+    {
+      "date": "2024-01-05",
+      "amount": 45.6,
+      "category": "Dining",
+      "merchant": "McDonalds"
+    },
+    {
+      "date": "2024-01-12",
+      "amount": 1200,
+      "category": "Rent",
+      "merchant": "Landlord"
+    },
+    {
+      "date": "2024-02-02",
+      "amount": 60.0,
+      "category": "Dining",
+      "merchant": "Starbucks"
+    }
+  ],
+  "chat_history": [
+    {
+      "role": "assistant",
+      "message": "Hi \ud83d\udc4b I am your virtual banking assistant."
+    },
+    {
+      "role": "user",
+      "message": "How much did I spend last month?"
+    },
+    {
+      "role": "user",
+      "message": "Check balance"
+    },
+    {
+      "role": "assistant",
+      "message": "I am analyzing your finances."
+    },
+    {
+      "role": "user",
+      "message": "can you tell me how Ive spent over the week?"
+    },
+    {
+      "role": "assistant",
+      "message": "I am analyzing your finances."
+    }
+  ]
+}

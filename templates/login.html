@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Dummy Bank | Login</title>
+
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="bg-light">
+
+<nav class="navbar navbar-dark bg-dark">
+    <div class="container-fluid">
+        <span class="navbar-brand mb-0 h1 text-center">
+            <img src="../static/images/bank_logo.png" alt="" width="100" height="100">
+            Dummy Bank</span>
+    </div>
+</nav>
+
+<div class="container d-flex justify-content-center align-items-center min-vh-90 pt-4">
+    <div class="card shadow p-4 login-card">
+
+        <h4 class="text-center mb-4">Login to Your Account</h4>
+
+        {% if error %}
+            <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+
+        <form method="POST">
+            <div class="mb-3">
+                <input class="form-control" type="text" name="username" placeholder="Username" required>
+            </div>
+
+            <div class="mb-3">
+                <input class="form-control" type="password" name="password" placeholder="Password" required>
+            </div>
+
+            <button class="btn btn-primary w-100">Login</button>
+        </form>
+
+    </div>
+</div>
+
+</body>
+</html>

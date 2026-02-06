@@ -1,0 +1,7 @@
+username,message,sender
+user1,hi can u help me,user
+user1,"I can help you with balance, loans, and account queries.",bot
+user1,Check balance,user
+user1,"Your current balance is SGD 10,000.",bot
+user1,Help,user
+user1,"I can help you with balance, loans, and account queries.",bot
