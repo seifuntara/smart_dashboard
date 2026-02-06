@@ -113,7 +113,8 @@ async function sendMessage() {
         message: message,
         context: {
           view: currentView,
-          role: selectedRole
+          role: selectedRole,
+          what_if: window.currentWhatIf || null
         }
       })
     });

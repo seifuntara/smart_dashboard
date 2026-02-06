@@ -19,17 +19,14 @@
   <div class="card shadow p-3 mt-4">
     <h6>What-If Analysis</h6>
 
-    <select id="whatIfCategory" class="form-control mb-2">
-      <option>Dining</option>
-      <option>Shopping</option>
-      <option>Transport</option>
-      <option>Rent</option>
+    <label class="form-label">Select categories (hold Ctrl/Cmd to multi-select)</label>
+    <select id="whatIfCategories" class="form-control mb-2" multiple size="4">
+      <!-- populated dynamically -->
     </select>
 
-    <input id="whatIfDelta"
-           type="number"
-           class="form-control mb-2"
-           placeholder="Change amount (e.g. -50)">
+    <div id="whatIfDeltasContainer" class="mb-2">
+      <!-- per-category delta inputs will be added here -->
+    </div>
 
     <button class="btn btn-primary" onclick="runWhatIf()">Simulate</button>
 
