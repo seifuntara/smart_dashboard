@@ -164,7 +164,9 @@
           <img src="/static/images/bot.png" class="bot-avatar">
           <div>
             <div class="fw-bold">Bank Assistant</div>
-            <small class="text-success">● Online</small>
+            <div class="d-flex align-items-center">
+              <small class="text-success">● Online</small>
+            </div>
           </div>
         </div>
 
@@ -172,6 +174,13 @@
           <div class="bot-message">
             Hi 👋 I’m your financial assistant.
             Ask me about what you see on the screen.
+          </div>
+
+          <div id="roleButtons" class="mt-2">
+            <div class="mb-1 small text-muted">Choose a response style:</div>
+            <button class="btn btn-outline-primary btn-sm me-1" data-role="agent">Agent</button>
+            <button class="btn btn-outline-primary btn-sm me-1" data-role="representative">Representative</button>
+            <button class="btn btn-outline-primary btn-sm" data-role="human">Human</button>
           </div>
         </div>
 

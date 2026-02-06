@@ -3,6 +3,7 @@
 ============================ */
 
 let currentView = "assistant";
+let selectedRole = "agent";
 
 document
   .querySelectorAll('button[data-bs-toggle="tab"]')
@@ -12,6 +13,39 @@ document
       console.log("Current view:", currentView);
     });
   });
+
+// Role buttons rendered in the chat area
+document.addEventListener("DOMContentLoaded", () => {
+  const roleButtons = document.getElementById("roleButtons");
+  if (!roleButtons) return;
+
+  // Initialize visual selection
+  roleButtons.querySelectorAll("button[data-role]").forEach(btn => {
+    if (btn.getAttribute("data-role") === selectedRole) {
+      btn.classList.remove("btn-outline-primary");
+      btn.classList.add("btn-primary");
+    }
+  });
+
+  roleButtons.querySelectorAll("button[data-role]").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      const role = e.currentTarget.getAttribute("data-role");
+      selectedRole = role;
+      console.log("Selected chat role:", selectedRole);
+
+      // Update button styles
+      roleButtons.querySelectorAll("button[data-role]").forEach(b => {
+        b.classList.remove("btn-primary");
+        b.classList.add("btn-outline-primary");
+      });
+      e.currentTarget.classList.remove("btn-outline-primary");
+      e.currentTarget.classList.add("btn-primary");
+
+      // Acknowledge selection in chat
+      addBotMessage(`Role set to ${role.charAt(0).toUpperCase() + role.slice(1)}.`);
+    });
+  });
+});
 
 /* ============================
    CHAT INPUT HANDLERS
@@ -78,7 +112,8 @@ async function sendMessage() {
       body: JSON.stringify({
         message: message,
         context: {
-          view: currentView
+          view: currentView,
+          role: selectedRole
         }
       })
     });

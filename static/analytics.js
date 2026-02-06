@@ -11,41 +11,17 @@ async function loadCategoryChart() {
   const res = await fetch("/analytics/category");
   const data = await res.json();
 
-  if (!data || Object.keys(data).length === 0) {
-    canvas.parentElement.innerHTML =
-      "<p class='text-muted text-center'>No category data available</p>";
-    return;
-  }
+  if (Object.keys(data).length === 0) return;
 
   if (categoryChart) categoryChart.destroy();
-
-  const labels = Object.keys(data);
-  const values = Object.values(data);
-  const total = values.reduce((a, b) => a + b, 0);
 
   categoryChart = new Chart(canvas, {
     type: "pie",
     data: {
-      labels: labels,
+      labels: Object.keys(data),
       datasets: [{
-        data: values
+        data: Object.values(data)
       }]
-    },
-    options: {
-      plugins: {
-        tooltip: {
-          callbacks: {
-            label: function (context) {
-              const value = context.raw;
-              const percent = ((value / total) * 100).toFixed(1);
-              return `${context.label}: ${percent}%`;
-            }
-          }
-        },
-        legend: {
-          position: "bottom"
-        }
-      }
     }
   });
 }
@@ -58,11 +34,7 @@ async function loadMonthlyChart() {
   const res = await fetch("/analytics/monthly");
   const data = await res.json();
 
-  if (!data || Object.keys(data).length === 0) {
-    canvas.parentElement.innerHTML =
-      "<p class='text-muted text-center'>No monthly data available</p>";
-    return;
-  }
+  if (Object.keys(data).length === 0) return;
 
   if (monthlyChart) monthlyChart.destroy();
 
@@ -71,34 +43,9 @@ async function loadMonthlyChart() {
     data: {
       labels: Object.keys(data),
       datasets: [{
-        label: "Total Spending (SGD)",
         data: Object.values(data),
-        tension: 0.3,
-        pointRadius: 4,
-        fill: false
+        tension: 0.3
       }]
-    },
-    options: {
-      plugins: {
-        legend: {
-          display: true
-        }
-      },
-      scales: {
-        y: {
-          beginAtZero: true,
-          title: {
-            display: true,
-            text: "Amount (SGD)"
-          }
-        },
-        x: {
-          title: {
-            display: true,
-            text: "Month"
-          }
-        }
-      }
     }
   });
 }
@@ -113,7 +60,7 @@ async function loadTransactionsTable() {
 
   tbody.innerHTML = "";
 
-  if (!transactions || transactions.length === 0) {
+  if (transactions.length === 0) {
     tbody.innerHTML = `
       <tr>
         <td colspan="4" class="text-center text-muted">
@@ -138,16 +85,10 @@ async function loadTransactionsTable() {
     });
 }
 
-/* ================= WHAT-IF ANALYSIS ================= */
+/* ================= WHAT IF ================= */
 async function runWhatIf() {
   const category = document.getElementById("whatIfCategory").value;
-  const delta = Number(document.getElementById("whatIfDelta").value);
-
-  if (isNaN(delta)) {
-    document.getElementById("whatIfResult").innerHTML =
-      "<p class='text-danger'>Please enter a valid number.</p>";
-    return;
-  }
+  const delta = document.getElementById("whatIfDelta").value;
 
   const res = await fetch("/what-if", {
     method: "POST",
@@ -163,15 +104,32 @@ async function runWhatIf() {
   `;
 }
 
-/* ================= LOAD WHEN ANALYTICS TAB OPENS ================= */
+/* ================= LOAD WHEN TAB OPENS ================= */
+document
+  .querySelector('button[data-bs-target="#analytics"]')
+  .addEventListener("shown.bs.tab", () => {
+    loadCategoryChart();
+    loadMonthlyChart();
+    loadTransactionsTable();
+  });
+
+
 const analyticsTabBtn =
   document.querySelector('button[data-bs-target="#analytics"]');
 
 if (analyticsTabBtn) {
   analyticsTabBtn.addEventListener("shown.bs.tab", () => {
     console.log("Analytics tab opened");
-    loadCategoryChart();
-    loadMonthlyChart();
-    loadTransactionsTable();
+
+    setTimeout(() => {
+      loadCategoryChart();
+      loadMonthlyChart();
+      loadTransactionsTable();
+    }, 100);
   });
 }
+
+/* ================= TRANSACTION FORM SUBMISSION ================= */
+// Transaction form submission is handled in the page (`dashboard.html`).
+// Removing duplicate handler here to avoid double submissions and
+// conflicting request formats (JSON vs FormData) which caused errors.

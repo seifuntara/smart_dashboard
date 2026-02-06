@@ -29,6 +29,18 @@ def format_analytics_context(context: dict) -> str:
 
 
 def handle_message(user_input, screen_context=None):
+    # Honor explicit role selected in the UI (if provided)
+    role = (screen_context or {}).get("role", "agent")
+
+    # If user selected a human, return a handoff message immediately
+    if role == "human":
+        return (
+            "I see you requested human assistance.\n\n"
+            "I have forwarded your request to our support team. "
+            "An agent will contact you at your registered email within 24 hours. "
+            "Ticket ID: #99281"
+        )
+
     view = (screen_context or {}).get("view", "assistant")
 
     # ---------------- ANALYTICS MODE ----------------
@@ -55,7 +67,17 @@ User question:
 """
         return ask_groq(prompt)
 
-    # ---------------- DEFAULT MODE ----------------
+    # ---------------- REPRESENTATIVE MODE ----------------
+    if role == "representative":
+        prompt = f"""
+You are a human customer support representative for a bank. Respond empathetically and clearly, using a helpful and professional tone. If action is required, explain next steps (e.g., refunds, escalation, or how to contact support). Keep answers concise and include any safety or verification steps where appropriate.
+
+User question:
+{user_input}
+"""
+        return ask_groq(prompt)
+
+    # ---------------- DEFAULT/AGENT MODE ----------------
     prompt = f"""
 You are a helpful banking assistant.
 
