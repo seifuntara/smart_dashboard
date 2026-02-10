@@ -1,31 +1,154 @@
 import json
+import os
+import sqlite3
 
-DATA_PATH = "data/users.json"
+JSON_PATH = "data/users.json"
+DB_PATH = "data/users.db"
 
-def load_data():
-    """Load all users from the JSON file. Returns dict of {username: user_data}"""
-    try:
-        with open(DATA_PATH, "r") as f:
-            data = json.load(f)
-            # If it's in old format (single user), convert to multi-user format
-            if "username" in data and not isinstance(data.get("username"), dict):
-                return {data["username"]: data}
-            return data
-    except FileNotFoundError:
+
+def _get_conn():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_db():
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY,
+            username TEXT,
+            password TEXT,
+            profile TEXT
+        )
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY,
+            user_id INTEGER,
+            date TEXT,
+            amount REAL,
+            category TEXT,
+            merchant TEXT
+        )
+        """
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def _migrate_json_if_needed():
+    # If DB already has a user, skip migration
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(1) as c FROM users")
+    row = cur.fetchone()
+    if row and row["c"] > 0:
+        conn.close()
+        return
+
+    # If JSON exists, load and insert into DB
+    if os.path.exists(JSON_PATH):
+        try:
+            with open(JSON_PATH, "r") as f:
+                data = json.load(f)
+
+            cur.execute(
+                "INSERT INTO users (username, password, profile) VALUES (?, ?, ?)",
+                (data.get("username"), data.get("password"), json.dumps(data.get("profile", {})))
+            )
+            user_id = cur.lastrowid
+
+            for t in data.get("transactions", []):
+                cur.execute(
+                    "INSERT INTO transactions (user_id, date, amount, category, merchant) VALUES (?, ?, ?, ?, ?)",
+                    (user_id, t.get("date"), float(t.get("amount", 0)), t.get("category"), t.get("merchant", ""))
+                )
+
+            conn.commit()
+        except Exception:
+            # If migration fails, don't crash — leave DB empty
+            pass
+
+    conn.close()
+
+
+def load_user():
+    _init_db()
+    _migrate_json_if_needed()
+
+    conn = _get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users ORDER BY id LIMIT 1")
+    row = cur.fetchone()
+    if not row:
+        conn.close()
         return {}
 
-def save_data(users_dict):
-    """Save all users to the JSON file. Expects dict of {username: user_data}"""
-    with open(DATA_PATH, "w") as f:
-        json.dump(users_dict, f, indent=2)
+    user_id = row["id"]
+    username = row["username"]
+    password = row["password"]
+    profile = json.loads(row["profile"] or "{}")
 
-def load_user(username):
-    """Load a specific user's data. Returns user dict or None if not found."""
-    users = load_data()
-    return users.get(username)
+    cur.execute("SELECT date, amount, category, merchant FROM transactions WHERE user_id = ? ORDER BY id", (user_id,))
+    tx_rows = cur.fetchall()
+    transactions = []
+    for r in tx_rows:
+        transactions.append({
+            "date": r["date"],
+            "amount": r["amount"],
+            "category": r["category"],
+            "merchant": r["merchant"]
+        })
 
-def save_user(username, user_data):
-    """Save a specific user's data."""
-    users = load_data()
-    users[username] = user_data
-    save_data(users)
+    conn.close()
+
+    return {
+        "username": username,
+        "password": password,
+        "profile": profile,
+        "transactions": transactions,
+    }
+
+
+def save_user(data):
+    # Upsert single user and replace transactions for that user
+    _init_db()
+    conn = _get_conn()
+    cur = conn.cursor()
+
+    cur.execute("SELECT id FROM users ORDER BY id LIMIT 1")
+    row = cur.fetchone()
+
+    profile_json = json.dumps(data.get("profile", {}))
+
+    if row:
+        user_id = row["id"]
+        cur.execute(
+            "UPDATE users SET username = ?, password = ?, profile = ? WHERE id = ?",
+            (data.get("username"), data.get("password"), profile_json, user_id)
+        )
+    else:
+        cur.execute(
+            "INSERT INTO users (username, password, profile) VALUES (?, ?, ?)",
+            (data.get("username"), data.get("password"), profile_json)
+        )
+        user_id = cur.lastrowid
+
+    # Replace transactions
+    cur.execute("DELETE FROM transactions WHERE user_id = ?", (user_id,))
+    for t in data.get("transactions", []):
+        cur.execute(
+            "INSERT INTO transactions (user_id, date, amount, category, merchant) VALUES (?, ?, ?, ?, ?)",
+            (user_id, t.get("date"), float(t.get("amount", 0)), t.get("category"), t.get("merchant", ""))
+        )
+
+    conn.commit()
+    conn.close()
