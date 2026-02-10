@@ -7,11 +7,15 @@ import requests
 IS_VERCEL = os.environ.get("VERCEL") == "1"
 
 # Edge Config credentials (on Vercel)
-EDGE_CONFIG_RAW = os.environ.get("EDGE_CONFIG")
-EDGE_CONFIG_URL = None
-EDGE_CONFIG_TOKEN = None
-EDGE_CONFIG_USE_API = False
+EDGE_CONFIG_URL = os.environ.get("EDGE_CONFIG")
 
+EDGE_CONFIG_RAW = os.environ.get("EDGE_CONFIG")
+EDGE_CONFIG_URL = EDGE_CONFIG_RAW
+
+# Extract token from URL if embedded, otherwise use env var
+EDGE_CONFIG_TOKEN = None
+EDGE_CONFIG_USE_EDGE_HOST = False
+EDGE_CONFIG_USE_API = False
 if EDGE_CONFIG_RAW:
     if "token=" in EDGE_CONFIG_RAW:
         # Token is embedded in URL like /.../ecfg_xxx?token=yyy
@@ -20,30 +24,33 @@ if EDGE_CONFIG_RAW:
     else:
         # Token is in a separate env var
         EDGE_CONFIG_TOKEN = os.environ.get("EDGE_CONFIG_TOKEN")
-        EDGE_CONFIG_URL = EDGE_CONFIG_RAW
 
     # Normalize EDGE_CONFIG_URL: remove trailing /items and trailing slash
-    if EDGE_CONFIG_URL:
-        EDGE_CONFIG_URL = EDGE_CONFIG_URL.rstrip('/')
-        if EDGE_CONFIG_URL.endswith('/items'):
-            EDGE_CONFIG_URL = EDGE_CONFIG_URL[:-len('/items')]
+    EDGE_CONFIG_URL = EDGE_CONFIG_URL.rstrip('/')
+    if EDGE_CONFIG_URL.endswith('/items'):
+        EDGE_CONFIG_URL = EDGE_CONFIG_URL[:-len('/items')]
 
-        # Convert edge-config.vercel.com URLs to api.vercel.com
-        if 'edge-config.vercel.com' in EDGE_CONFIG_URL:
-            try:
-                ecfg_id = EDGE_CONFIG_URL.rstrip('/').split('/')[-1].split('?')[0]
-                if ecfg_id and ecfg_id.startswith('ecfg_'):
-                    EDGE_CONFIG_URL = f"https://api.vercel.com/v1/edge-config/{ecfg_id}"
-                    EDGE_CONFIG_USE_API = True
-            except Exception:
-                pass
-        elif 'api.vercel.com' in EDGE_CONFIG_URL:
-            EDGE_CONFIG_USE_API = True
-        elif EDGE_CONFIG_URL.startswith('ecfg_'):
-            # If only ID provided, convert to API URL
+    # Detect which endpoint style was provided
+    if 'edge-config.vercel.com' in (EDGE_CONFIG_RAW or ''):
+        # Prefer converting public edge-config URL to the API URL using the ecfg id
+        try:
+            ecfg_id = EDGE_CONFIG_RAW.rstrip('/').split('/')[-1].split('?')[0]
+            if ecfg_id and ecfg_id.startswith('ecfg_'):
+                EDGE_CONFIG_URL = f"https://api.vercel.com/v1/edge-config/{ecfg_id}"
+                EDGE_CONFIG_USE_API = True
+            else:
+                EDGE_CONFIG_USE_EDGE_HOST = True
+        except Exception:
+            EDGE_CONFIG_USE_EDGE_HOST = True
+    elif 'api.vercel.com' in (EDGE_CONFIG_RAW or ''):
+        EDGE_CONFIG_USE_API = True
+    else:
+        # If the provided URL looks like an ecfg id, convert to API URL
+        if EDGE_CONFIG_URL and EDGE_CONFIG_URL.startswith('ecfg_'):
             EDGE_CONFIG_URL = f"https://api.vercel.com/v1/edge-config/{EDGE_CONFIG_URL}"
             EDGE_CONFIG_USE_API = True
 
+# (EDGE_CONFIG_URL normalized above)
 # SQLite database (local only)
 SQLITE_DB = "data/smart_dashboard.db"
 JSON_SOURCE_PATH = "data/users.json"
@@ -154,32 +161,42 @@ def _edge_config_get():
         return {}
     
     try:
-        url = f"{EDGE_CONFIG_URL}/item/app_data"
-        headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
-        resp = requests.get(url, headers=headers, timeout=10)
+        if EDGE_CONFIG_USE_EDGE_HOST:
+            url = f"{EDGE_CONFIG_URL}/items?key=app_data&token={EDGE_CONFIG_TOKEN}"
+            resp = requests.get(url, timeout=10)
+        elif EDGE_CONFIG_USE_API:
+            url = f"{EDGE_CONFIG_URL}/items?key=app_data"
+            headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
+            resp = requests.get(url, headers=headers, timeout=10)
+        else:
+            url_api = f"{EDGE_CONFIG_URL}/items?key=app_data"
+            headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
+            resp = requests.get(url_api, headers=headers, timeout=10)
+            if resp.status_code == 404 or resp.status_code == 403:
+                url_edge = f"{EDGE_CONFIG_URL}/items?key=app_data&token={EDGE_CONFIG_TOKEN}"
+                resp = requests.get(url_edge, timeout=10)
         
         if resp.status_code == 200:
-            value = resp.json()
+            data = resp.json()
             
-            # Value might be a string or already parsed
-            if isinstance(value, str):
-                if value.strip():
-                    result = json.loads(value)
+            # Handle different response formats
+            if isinstance(data, list):
+                # API returns list directly
+                if len(data) > 0 and "value" in data[0]:
+                    result = json.loads(data[0]["value"])
                 else:
                     result = {}
-            elif isinstance(value, dict):
-                result = value
+            elif isinstance(data, dict) and "items" in data:
+                # Edge Config host returns dict with items
+                result = json.loads(data["items"][0].get("value", "{}"))
             else:
                 result = {}
             
             print(f"Edge Config read: got {len(result)} users")
             return result
-        elif resp.status_code == 404:
-            print("Edge Config read: app_data key not found (empty)")
-            return {}
-        else:
-            print(f"Edge Config read failed: {resp.status_code} - {resp.text}")
-            return {}
+        
+        print(f"Edge Config read failed: {resp.status_code}")
+        return {}
     except Exception as e:
         print(f"Edge Config read error: {e}")
         import traceback
@@ -191,6 +208,8 @@ def _edge_config_set(data):
     """Save data to Vercel Edge Config."""
     if not EDGE_CONFIG_URL or not EDGE_CONFIG_TOKEN:
         print("WARNING: EDGE_CONFIG_URL or EDGE_CONFIG_TOKEN not set")
+        print(f"  EDGE_CONFIG_URL={EDGE_CONFIG_URL}")
+        print(f"  EDGE_CONFIG_TOKEN={'*' * 10 if EDGE_CONFIG_TOKEN else 'None'}")
         return
     
     try:
@@ -203,11 +222,24 @@ def _edge_config_set(data):
                 }
             ]
         }
-        
-        url = f"{EDGE_CONFIG_URL}/items"
-        headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
-        print(f"Edge Config write: PATCH to {url}")
-        resp = requests.patch(url, json=payload, headers=headers, timeout=10)
+        if EDGE_CONFIG_USE_EDGE_HOST:
+            url = f"{EDGE_CONFIG_URL}/items?token={EDGE_CONFIG_TOKEN}"
+            print(f"Edge Config write: PATCH to {EDGE_CONFIG_URL}/items?token=***")
+            resp = requests.patch(url, json=payload, timeout=10)
+        elif EDGE_CONFIG_USE_API:
+            url = f"{EDGE_CONFIG_URL}/items"
+            headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
+            print(f"Edge Config write: PATCH to {EDGE_CONFIG_URL}/items with Authorization header")
+            resp = requests.patch(url, json=payload, headers=headers, timeout=10)
+        else:
+            # Fallback: try API header then edge-host
+            url_api = f"{EDGE_CONFIG_URL}/items"
+            headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
+            resp = requests.patch(url_api, json=payload, headers=headers, timeout=10)
+            if resp.status_code == 404 or resp.status_code == 403:
+                url_edge = f"{EDGE_CONFIG_URL}/items?token={EDGE_CONFIG_TOKEN}"
+                print(f"Edge Config write fallback: PATCH to {EDGE_CONFIG_URL}/items?token=***")
+                resp = requests.patch(url_edge, json=payload, timeout=10)
         
         if resp.status_code not in [200, 204]:
             print(f"Edge Config write failed: {resp.status_code} - {resp.text}")
@@ -216,8 +248,6 @@ def _edge_config_set(data):
             
     except Exception as e:
         print(f"Edge Config write error: {e}")
-        import traceback
-        traceback.print_exc()
 
 
 def load_data():
