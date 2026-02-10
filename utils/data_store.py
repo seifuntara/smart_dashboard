@@ -153,7 +153,26 @@ def _edge_config_set(data):
 def load_data():
     """Load all users from SQLite (local) or Edge Config (Vercel)."""
     if IS_VERCEL:
-        return _edge_config_get()
+        data = _edge_config_get()
+        
+        # If Edge Config is empty, initialize from JSON
+        if not data and os.path.exists(JSON_SOURCE_PATH):
+            try:
+                with open(JSON_SOURCE_PATH, "r") as f:
+                    json_data = json.load(f)
+                
+                # Handle old single-user format
+                if "username" in json_data and not isinstance(json_data.get("username"), dict):
+                    data = {json_data["username"]: json_data}
+                else:
+                    data = json_data
+                
+                # Save to Edge Config
+                _edge_config_set(data)
+            except Exception as e:
+                print(f"Error initializing Edge Config from JSON: {e}")
+        
+        return data
     
     # Local: use SQLite
     _init_sqlite_db()
