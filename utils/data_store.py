@@ -1,27 +1,31 @@
 import json
 import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import sqlite3
+import requests
 
-# PostgreSQL connection
-DATABASE_URL = os.environ.get("DATABASE_URL")
+# Detect environment
+IS_VERCEL = os.environ.get("VERCEL") == "1"
 
-# For local development, use environment variable or default
-if not DATABASE_URL:
-    DATABASE_URL = os.environ.get("DATABASE_LOCAL_URL", "postgresql://postgres:postgres@localhost/smart_dashboard")
+# Edge Config credentials (on Vercel)
+EDGE_CONFIG_URL = os.environ.get("EDGE_CONFIG")
+EDGE_CONFIG_TOKEN = os.environ.get("EDGE_CONFIG_TOKEN")
 
+# SQLite database (local only)
+SQLITE_DB = "data/smart_dashboard.db"
 JSON_SOURCE_PATH = "data/users.json"
 
 
-def _get_conn():
-    """Get PostgreSQL connection."""
-    conn = psycopg2.connect(DATABASE_URL)
+def _get_sqlite_conn():
+    """Get SQLite connection."""
+    os.makedirs("data", exist_ok=True)
+    conn = sqlite3.connect(SQLITE_DB)
+    conn.row_factory = sqlite3.Row
     return conn
 
 
-def _init_db():
-    """Initialize database schema."""
-    conn = _get_conn()
+def _init_sqlite_db():
+    """Initialize SQLite schema."""
+    conn = _get_sqlite_conn()
     cur = conn.cursor()
     
     cur.execute("""
@@ -36,7 +40,7 @@ def _init_db():
     
     cur.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
-            id SERIAL PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT,
             date TEXT,
             amount REAL,
@@ -47,25 +51,22 @@ def _init_db():
     """)
     
     conn.commit()
-    cur.close()
     conn.close()
 
 
-def _migrate_json_to_db_if_needed():
-    """Migrate data from JSON to PostgreSQL on first run."""
-    conn = _get_conn()
+def _migrate_json_to_sqlite_if_needed():
+    """Migrate data from JSON to SQLite on first run."""
+    conn = _get_sqlite_conn()
     cur = conn.cursor()
     
     # Check if DB already has data
     cur.execute("SELECT COUNT(*) as c FROM users")
     if cur.fetchone()[0] > 0:
-        cur.close()
         conn.close()
         return
     
     # Try to load from JSON source
     if not os.path.exists(JSON_SOURCE_PATH):
-        cur.close()
         conn.close()
         return
     
@@ -82,7 +83,7 @@ def _migrate_json_to_db_if_needed():
         # Insert into DB
         for username, user_data in users_dict.items():
             cur.execute(
-                "INSERT INTO users (username, password, profile, accounts, chat_history) VALUES (%s, %s, %s, %s, %s)",
+                "INSERT INTO users (username, password, profile, accounts, chat_history) VALUES (?, ?, ?, ?, ?)",
                 (
                     username,
                     user_data.get("password"),
@@ -94,7 +95,7 @@ def _migrate_json_to_db_if_needed():
             
             for tx in user_data.get("transactions", []):
                 cur.execute(
-                    "INSERT INTO transactions (username, date, amount, category, merchant) VALUES (%s, %s, %s, %s, %s)",
+                    "INSERT INTO transactions (username, date, amount, category, merchant) VALUES (?, ?, ?, ?, ?)",
                     (
                         username,
                         tx.get("date"),
@@ -109,17 +110,57 @@ def _migrate_json_to_db_if_needed():
         print(f"Migration error: {e}")
         conn.rollback()
     finally:
-        cur.close()
         conn.close()
 
 
-def load_data():
-    """Load all users from PostgreSQL."""
-    _init_db()
-    _migrate_json_to_db_if_needed()
+def _edge_config_get():
+    """Fetch data from Vercel Edge Config."""
+    if not EDGE_CONFIG_URL or not EDGE_CONFIG_TOKEN:
+        return {}
     
-    conn = _get_conn()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
+        resp = requests.get(f"{EDGE_CONFIG_URL}/items?key=app_data", headers=headers)
+        if resp.status_code == 200:
+            data = resp.json()
+            return json.loads(data.get("items", [{}])[0].get("value", "{}"))
+        return {}
+    except Exception as e:
+        print(f"Edge Config read error: {e}")
+        return {}
+
+
+def _edge_config_set(data):
+    """Save data to Vercel Edge Config."""
+    if not EDGE_CONFIG_URL or not EDGE_CONFIG_TOKEN:
+        return
+    
+    try:
+        headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
+        payload = {
+            "items": [
+                {
+                    "key": "app_data",
+                    "value": json.dumps(data)
+                }
+            ]
+        }
+        requests.patch(f"{EDGE_CONFIG_URL}/items", json=payload, headers=headers)
+    except Exception as e:
+        print(f"Edge Config write error: {e}")
+
+
+def load_data():
+    """Load all users from SQLite (local) or Edge Config (Vercel)."""
+    if IS_VERCEL:
+        return _edge_config_get()
+    
+    # Local: use SQLite
+    _init_sqlite_db()
+    _migrate_json_to_sqlite_if_needed()
+    
+    conn = _get_sqlite_conn()
+    cur = conn.cursor()
     
     cur.execute("SELECT username, password, profile, accounts, chat_history FROM users")
     users_dict = {}
@@ -129,7 +170,7 @@ def load_data():
         
         # Get transactions for this user
         cur.execute(
-            "SELECT date, amount, category, merchant FROM transactions WHERE username = %s ORDER BY id",
+            "SELECT date, amount, category, merchant FROM transactions WHERE username = ? ORDER BY id",
             (username,)
         )
         transactions = [
@@ -151,15 +192,19 @@ def load_data():
             "chat_history": json.loads(row["chat_history"] or "[]")
         }
     
-    cur.close()
     conn.close()
     return users_dict
 
 
 def save_data(users_dict):
-    """Save all users to PostgreSQL."""
-    _init_db()
-    conn = _get_conn()
+    """Save all users to SQLite (local) or Edge Config (Vercel)."""
+    if IS_VERCEL:
+        _edge_config_set(users_dict)
+        return
+    
+    # Local: use SQLite
+    _init_sqlite_db()
+    conn = _get_sqlite_conn()
     cur = conn.cursor()
     
     try:
@@ -170,7 +215,7 @@ def save_data(users_dict):
         # Insert all users and their transactions
         for username, user_data in users_dict.items():
             cur.execute(
-                "INSERT INTO users (username, password, profile, accounts, chat_history) VALUES (%s, %s, %s, %s, %s)",
+                "INSERT INTO users (username, password, profile, accounts, chat_history) VALUES (?, ?, ?, ?, ?)",
                 (
                     username,
                     user_data.get("password"),
@@ -182,7 +227,7 @@ def save_data(users_dict):
             
             for tx in user_data.get("transactions", []):
                 cur.execute(
-                    "INSERT INTO transactions (username, date, amount, category, merchant) VALUES (%s, %s, %s, %s, %s)",
+                    "INSERT INTO transactions (username, date, amount, category, merchant) VALUES (?, ?, ?, ?, ?)",
                     (
                         username,
                         tx.get("date"),
@@ -197,7 +242,6 @@ def save_data(users_dict):
         print(f"Save error: {e}")
         conn.rollback()
     finally:
-        cur.close()
         conn.close()
 
 
@@ -216,7 +260,7 @@ def load_user(username=None):
 
 def save_user(username_or_data, user_data=None):
     """
-    Save a single user to SQLite.
+    Save a single user.
     Can be called as:
     - save_user(user_dict) where user_dict contains 'username' key
     - save_user(username, user_dict)
