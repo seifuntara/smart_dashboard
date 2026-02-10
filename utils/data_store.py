@@ -172,7 +172,8 @@ def _edge_config_set(data):
             "items": [
                 {
                     "key": "app_data",
-                    "value": json.dumps(data)
+                    "value": json.dumps(data),
+                    "operation": "upsert"
                 }
             ]
         }
