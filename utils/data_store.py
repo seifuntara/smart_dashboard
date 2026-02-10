@@ -116,14 +116,18 @@ def _migrate_json_to_sqlite_if_needed():
 def _edge_config_get():
     """Fetch data from Vercel Edge Config."""
     if not EDGE_CONFIG_URL or not EDGE_CONFIG_TOKEN:
+        print("WARNING: EDGE_CONFIG_URL or EDGE_CONFIG_TOKEN not set")
         return {}
     
     try:
         headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
-        resp = requests.get(f"{EDGE_CONFIG_URL}/items?key=app_data", headers=headers)
+        resp = requests.get(f"{EDGE_CONFIG_URL}/items?key=app_data", headers=headers, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            return json.loads(data.get("items", [{}])[0].get("value", "{}"))
+            result = json.loads(data.get("items", [{}])[0].get("value", "{}"))
+            print(f"Edge Config read: got {len(result)} users")
+            return result
+        print(f"Edge Config read failed: {resp.status_code}")
         return {}
     except Exception as e:
         print(f"Edge Config read error: {e}")
@@ -133,6 +137,7 @@ def _edge_config_get():
 def _edge_config_set(data):
     """Save data to Vercel Edge Config."""
     if not EDGE_CONFIG_URL or not EDGE_CONFIG_TOKEN:
+        print("WARNING: EDGE_CONFIG_URL or EDGE_CONFIG_TOKEN not set")
         return
     
     try:
@@ -145,7 +150,13 @@ def _edge_config_set(data):
                 }
             ]
         }
-        requests.patch(f"{EDGE_CONFIG_URL}/items", json=payload, headers=headers)
+        resp = requests.patch(f"{EDGE_CONFIG_URL}/items", json=payload, headers=headers, timeout=10)
+        
+        if resp.status_code not in [200, 204]:
+            print(f"Edge Config write failed: {resp.status_code} - {resp.text}")
+        else:
+            print(f"Edge Config updated: {len(data)} users saved")
+            
     except Exception as e:
         print(f"Edge Config write error: {e}")
 
@@ -153,10 +164,12 @@ def _edge_config_set(data):
 def load_data():
     """Load all users from SQLite (local) or Edge Config (Vercel)."""
     if IS_VERCEL:
+        print("Loading from Edge Config...")
         data = _edge_config_get()
         
         # If Edge Config is empty, initialize from JSON
         if not data and os.path.exists(JSON_SOURCE_PATH):
+            print("Edge Config empty, initializing from JSON...")
             try:
                 with open(JSON_SOURCE_PATH, "r") as f:
                     json_data = json.load(f)
@@ -167,6 +180,7 @@ def load_data():
                 else:
                     data = json_data
                 
+                print(f"Loaded {len(data)} users from JSON, saving to Edge Config...")
                 # Save to Edge Config
                 _edge_config_set(data)
             except Exception as e:
