@@ -8,7 +8,7 @@ IS_VERCEL = os.environ.get("VERCEL") == "1"
 
 # Edge Config credentials (on Vercel)
 EDGE_CONFIG_URL = os.environ.get("EDGE_CONFIG")
-EDGE_CONFIG_TOKEN = os.environ.get("EDGE_CONFIG_TOKEN")
+EDGE_CONFIG_TOKEN = os.environ.get("smart_dashboard-token")
 
 # SQLite database (local only)
 SQLITE_DB = "data/smart_dashboard.db"
