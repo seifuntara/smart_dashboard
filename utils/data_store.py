@@ -148,6 +148,8 @@ def _edge_config_set(data):
     """Save data to Vercel Edge Config."""
     if not EDGE_CONFIG_URL or not EDGE_CONFIG_TOKEN:
         print("WARNING: EDGE_CONFIG_URL or EDGE_CONFIG_TOKEN not set")
+        print(f"  EDGE_CONFIG_URL={EDGE_CONFIG_URL}")
+        print(f"  EDGE_CONFIG_TOKEN={'*' * 10 if EDGE_CONFIG_TOKEN else 'None'}")
         return
     
     try:
@@ -160,7 +162,9 @@ def _edge_config_set(data):
                 }
             ]
         }
-        resp = requests.patch(f"{EDGE_CONFIG_URL}/items", json=payload, headers=headers, timeout=10)
+        url = f"{EDGE_CONFIG_URL}/items"
+        print(f"Edge Config write: POST to {url}")
+        resp = requests.patch(url, json=payload, headers=headers, timeout=10)
         
         if resp.status_code not in [200, 204]:
             print(f"Edge Config write failed: {resp.status_code} - {resp.text}")
