@@ -20,6 +20,12 @@ else:
     # Token is in a separate env var
     EDGE_CONFIG_TOKEN = os.environ.get("smart_dashboard-token")
 
+# Normalize EDGE_CONFIG_URL: remove trailing /items and trailing slash
+if EDGE_CONFIG_URL:
+    EDGE_CONFIG_URL = EDGE_CONFIG_URL.rstrip('/')
+    if EDGE_CONFIG_URL.endswith('/items'):
+        EDGE_CONFIG_URL = EDGE_CONFIG_URL[:-len('/items')]
+
 # SQLite database (local only)
 SQLITE_DB = "data/smart_dashboard.db"
 JSON_SOURCE_PATH = "data/users.json"
@@ -162,7 +168,7 @@ def _edge_config_set(data):
             ]
         }
         url = f"{EDGE_CONFIG_URL}/items?token={EDGE_CONFIG_TOKEN}"
-        print(f"Edge Config write: PATCH to {url.split('?')[0]}/items?token=***")
+        print(f"Edge Config write: PATCH to {EDGE_CONFIG_URL}/items?token=***")
         resp = requests.patch(url, json=payload, timeout=10)
         
         if resp.status_code not in [200, 204]:
