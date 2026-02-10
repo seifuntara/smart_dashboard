@@ -1,21 +1,21 @@
 import json
 import os
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
-# Use /tmp on Vercel (writable), otherwise use data/users.db
-if os.environ.get("VERCEL"):
-    DB_PATH = "/tmp/users.db"
-else:
-    DB_PATH = "data/users.db"
+# PostgreSQL connection
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# Source JSON file for initial migration (local or Vercel read-only)
+# For local development, use environment variable or default
+if not DATABASE_URL:
+    DATABASE_URL = os.environ.get("DATABASE_LOCAL_URL", "postgresql://postgres:postgres@localhost/smart_dashboard")
+
 JSON_SOURCE_PATH = "data/users.json"
 
 
 def _get_conn():
-    """Get SQLite connection."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    """Get PostgreSQL connection."""
+    conn = psycopg2.connect(DATABASE_URL)
     return conn
 
 
@@ -36,7 +36,7 @@ def _init_db():
     
     cur.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY,
+            id SERIAL PRIMARY KEY,
             username TEXT,
             date TEXT,
             amount REAL,
@@ -47,22 +47,25 @@ def _init_db():
     """)
     
     conn.commit()
+    cur.close()
     conn.close()
 
 
 def _migrate_json_to_db_if_needed():
-    """Migrate data from JSON to SQLite on first run."""
+    """Migrate data from JSON to PostgreSQL on first run."""
     conn = _get_conn()
     cur = conn.cursor()
     
     # Check if DB already has data
     cur.execute("SELECT COUNT(*) as c FROM users")
-    if cur.fetchone()["c"] > 0:
+    if cur.fetchone()[0] > 0:
+        cur.close()
         conn.close()
         return
     
     # Try to load from JSON source
     if not os.path.exists(JSON_SOURCE_PATH):
+        cur.close()
         conn.close()
         return
     
@@ -79,7 +82,7 @@ def _migrate_json_to_db_if_needed():
         # Insert into DB
         for username, user_data in users_dict.items():
             cur.execute(
-                "INSERT INTO users (username, password, profile, accounts, chat_history) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO users (username, password, profile, accounts, chat_history) VALUES (%s, %s, %s, %s, %s)",
                 (
                     username,
                     user_data.get("password"),
@@ -91,7 +94,7 @@ def _migrate_json_to_db_if_needed():
             
             for tx in user_data.get("transactions", []):
                 cur.execute(
-                    "INSERT INTO transactions (username, date, amount, category, merchant) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO transactions (username, date, amount, category, merchant) VALUES (%s, %s, %s, %s, %s)",
                     (
                         username,
                         tx.get("date"),
@@ -104,17 +107,19 @@ def _migrate_json_to_db_if_needed():
         conn.commit()
     except Exception as e:
         print(f"Migration error: {e}")
+        conn.rollback()
     finally:
+        cur.close()
         conn.close()
 
 
 def load_data():
-    """Load all users from SQLite."""
+    """Load all users from PostgreSQL."""
     _init_db()
     _migrate_json_to_db_if_needed()
     
     conn = _get_conn()
-    cur = conn.cursor()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
     
     cur.execute("SELECT username, password, profile, accounts, chat_history FROM users")
     users_dict = {}
@@ -124,7 +129,7 @@ def load_data():
         
         # Get transactions for this user
         cur.execute(
-            "SELECT date, amount, category, merchant FROM transactions WHERE username = ? ORDER BY id",
+            "SELECT date, amount, category, merchant FROM transactions WHERE username = %s ORDER BY id",
             (username,)
         )
         transactions = [
@@ -146,47 +151,54 @@ def load_data():
             "chat_history": json.loads(row["chat_history"] or "[]")
         }
     
+    cur.close()
     conn.close()
     return users_dict
 
 
 def save_data(users_dict):
-    """Save all users to SQLite."""
+    """Save all users to PostgreSQL."""
     _init_db()
     conn = _get_conn()
     cur = conn.cursor()
     
-    # Clear existing data
-    cur.execute("DELETE FROM transactions")
-    cur.execute("DELETE FROM users")
-    
-    # Insert all users and their transactions
-    for username, user_data in users_dict.items():
-        cur.execute(
-            "INSERT INTO users (username, password, profile, accounts, chat_history) VALUES (?, ?, ?, ?, ?)",
-            (
-                username,
-                user_data.get("password"),
-                json.dumps(user_data.get("profile", {})),
-                json.dumps(user_data.get("accounts", {})),
-                json.dumps(user_data.get("chat_history", []))
-            )
-        )
+    try:
+        # Clear existing data
+        cur.execute("DELETE FROM transactions")
+        cur.execute("DELETE FROM users")
         
-        for tx in user_data.get("transactions", []):
+        # Insert all users and their transactions
+        for username, user_data in users_dict.items():
             cur.execute(
-                "INSERT INTO transactions (username, date, amount, category, merchant) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO users (username, password, profile, accounts, chat_history) VALUES (%s, %s, %s, %s, %s)",
                 (
                     username,
-                    tx.get("date"),
-                    tx.get("amount"),
-                    tx.get("category"),
-                    tx.get("merchant")
+                    user_data.get("password"),
+                    json.dumps(user_data.get("profile", {})),
+                    json.dumps(user_data.get("accounts", {})),
+                    json.dumps(user_data.get("chat_history", []))
                 )
             )
-    
-    conn.commit()
-    conn.close()
+            
+            for tx in user_data.get("transactions", []):
+                cur.execute(
+                    "INSERT INTO transactions (username, date, amount, category, merchant) VALUES (%s, %s, %s, %s, %s)",
+                    (
+                        username,
+                        tx.get("date"),
+                        tx.get("amount"),
+                        tx.get("category"),
+                        tx.get("merchant")
+                    )
+                )
+        
+        conn.commit()
+    except Exception as e:
+        print(f"Save error: {e}")
+        conn.rollback()
+    finally:
+        cur.close()
+        conn.close()
 
 
 def load_user(username=None):
