@@ -184,7 +184,7 @@ def _edge_config_get():
                 # API returns list directly
                 if len(data) > 0 and "value" in data[0]:
                     print("DEBUG: Found value in first item:")
-                    print(data[0])
+                    print(data[1])
                     result = json.loads(data[0]["value"])
                 else:
                     result = {}
