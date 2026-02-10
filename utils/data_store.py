@@ -32,13 +32,23 @@ if EDGE_CONFIG_RAW:
 
     # Detect which endpoint style was provided
     if 'edge-config.vercel.com' in (EDGE_CONFIG_RAW or ''):
-        EDGE_CONFIG_USE_EDGE_HOST = True
+        # Prefer converting public edge-config URL to the API URL using the ecfg id
+        try:
+            ecfg_id = EDGE_CONFIG_RAW.rstrip('/').split('/')[-1].split('?')[0]
+            if ecfg_id and ecfg_id.startswith('ecfg_'):
+                EDGE_CONFIG_URL = f"https://api.vercel.com/v1/edge-config/{ecfg_id}"
+                EDGE_CONFIG_USE_API = True
+            else:
+                EDGE_CONFIG_USE_EDGE_HOST = True
+        except Exception:
+            EDGE_CONFIG_USE_EDGE_HOST = True
     elif 'api.vercel.com' in (EDGE_CONFIG_RAW or ''):
         EDGE_CONFIG_USE_API = True
     else:
-        # If the provided URL looks like an ecfg id or edge host, prefer edge host style
+        # If the provided URL looks like an ecfg id, convert to API URL
         if EDGE_CONFIG_URL and EDGE_CONFIG_URL.startswith('ecfg_'):
-            EDGE_CONFIG_USE_EDGE_HOST = True
+            EDGE_CONFIG_URL = f"https://api.vercel.com/v1/edge-config/{EDGE_CONFIG_URL}"
+            EDGE_CONFIG_USE_API = True
 
 # (EDGE_CONFIG_URL normalized above)
 # SQLite database (local only)
