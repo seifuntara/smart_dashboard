@@ -169,22 +169,38 @@ def _edge_config_get():
             headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
             resp = requests.get(url, headers=headers, timeout=10)
         else:
-            # Fallback: try API header first, then edge-host token query
             url_api = f"{EDGE_CONFIG_URL}/items?key=app_data"
             headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
             resp = requests.get(url_api, headers=headers, timeout=10)
             if resp.status_code == 404 or resp.status_code == 403:
                 url_edge = f"{EDGE_CONFIG_URL}/items?key=app_data&token={EDGE_CONFIG_TOKEN}"
                 resp = requests.get(url_edge, timeout=10)
+        
         if resp.status_code == 200:
             data = resp.json()
-            result = json.loads(data.get("items", [{}])[0].get("value", "{}"))
+            
+            # Handle different response formats
+            if isinstance(data, list):
+                # API returns list directly
+                if len(data) > 0 and "value" in data[0]:
+                    result = json.loads(data[0]["value"])
+                else:
+                    result = {}
+            elif isinstance(data, dict) and "items" in data:
+                # Edge Config host returns dict with items
+                result = json.loads(data["items"][0].get("value", "{}"))
+            else:
+                result = {}
+            
             print(f"Edge Config read: got {len(result)} users")
             return result
+        
         print(f"Edge Config read failed: {resp.status_code}")
         return {}
     except Exception as e:
         print(f"Edge Config read error: {e}")
+        import traceback
+        traceback.print_exc()
         return {}
 
 
