@@ -26,6 +26,15 @@ if EDGE_CONFIG_URL:
     if EDGE_CONFIG_URL.endswith('/items'):
         EDGE_CONFIG_URL = EDGE_CONFIG_URL[:-len('/items')]
 
+    # If user provided the edge-config.vercel.com link, convert to API URL
+    # e.g. https://edge-config.vercel.com/ecfg_xxx -> https://api.vercel.com/v1/edge-config/ecfg_xxx
+    try:
+        if 'edge-config.vercel.com' in EDGE_CONFIG_URL:
+            ecfg_id = EDGE_CONFIG_URL.split('/')[-1].split('?')[0]
+            if ecfg_id:
+                EDGE_CONFIG_URL = f"https://api.vercel.com/v1/edge-config/{ecfg_id}"
+    except Exception:
+        pass
 # SQLite database (local only)
 SQLITE_DB = "data/smart_dashboard.db"
 JSON_SOURCE_PATH = "data/users.json"
