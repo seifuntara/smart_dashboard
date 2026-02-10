@@ -183,12 +183,21 @@ def _edge_config_get():
             if isinstance(data, list):
                 # API returns list directly
                 if len(data) > 0 and "value" in data[0]:
-                    result = json.loads(data[0]["value"])
+                    value = data[0]["value"]
+                    # Value might already be parsed or might be a string
+                    if isinstance(value, str):
+                        result = json.loads(value)
+                    else:
+                        result = value
                 else:
                     result = {}
             elif isinstance(data, dict) and "items" in data:
                 # Edge Config host returns dict with items
-                result = json.loads(data["items"][0].get("value", "{}"))
+                value = data["items"][0].get("value", "{}")
+                if isinstance(value, str):
+                    result = json.loads(value)
+                else:
+                    result = value
             else:
                 result = {}
             
