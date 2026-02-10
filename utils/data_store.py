@@ -181,11 +181,15 @@ def _edge_config_get():
             
             # Handle different response formats
             if isinstance(data, list):
-                # API returns list directly
-                if len(data) > 0 and "value" in data[0]:
-                    print("DEBUG: Found value in first item:")
-                    print(data[1])
-                    result = json.loads(data[0]["value"])
+                # API returns list directly - find app_data key
+                app_data_item = None
+                for item in data:
+                    if isinstance(item, dict) and item.get('key') == 'app_data':
+                        app_data_item = item
+                        break
+                
+                if app_data_item and "value" in app_data_item:
+                    result = json.loads(app_data_item["value"])
                 else:
                     result = {}
             elif isinstance(data, dict) and "items" in data:
