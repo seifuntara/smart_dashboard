@@ -1,65 +1,196 @@
 import json
 import os
+import sqlite3
 
-# Use /tmp on Vercel (writable), otherwise use data/users.json
+# Use /tmp on Vercel (writable), otherwise use data/users.db
 if os.environ.get("VERCEL"):
-    JSON_PATH = "/tmp/users.json"
-    # On Vercel, also try to read from the original data dir as a fallback
-    FALLBACK_JSON_PATH = "data/users.json"
+    DB_PATH = "/tmp/users.db"
 else:
-    JSON_PATH = "data/users.json"
-    FALLBACK_JSON_PATH = None
+    DB_PATH = "data/users.db"
+
+# Source JSON file for initial migration (local or Vercel read-only)
+JSON_SOURCE_PATH = "data/users.json"
+
+
+def _get_conn():
+    """Get SQLite connection."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_db():
+    """Initialize database schema."""
+    conn = _get_conn()
+    cur = conn.cursor()
+    
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            password TEXT,
+            profile TEXT,
+            accounts TEXT,
+            chat_history TEXT
+        )
+    """)
+    
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY,
+            username TEXT,
+            date TEXT,
+            amount REAL,
+            category TEXT,
+            merchant TEXT,
+            FOREIGN KEY (username) REFERENCES users(username)
+        )
+    """)
+    
+    conn.commit()
+    conn.close()
+
+
+def _migrate_json_to_db_if_needed():
+    """Migrate data from JSON to SQLite on first run."""
+    conn = _get_conn()
+    cur = conn.cursor()
+    
+    # Check if DB already has data
+    cur.execute("SELECT COUNT(*) as c FROM users")
+    if cur.fetchone()["c"] > 0:
+        conn.close()
+        return
+    
+    # Try to load from JSON source
+    if not os.path.exists(JSON_SOURCE_PATH):
+        conn.close()
+        return
+    
+    try:
+        with open(JSON_SOURCE_PATH, "r") as f:
+            json_data = json.load(f)
+        
+        # Handle old single-user format
+        if "username" in json_data and not isinstance(json_data.get("username"), dict):
+            users_dict = {json_data["username"]: json_data}
+        else:
+            users_dict = json_data
+        
+        # Insert into DB
+        for username, user_data in users_dict.items():
+            cur.execute(
+                "INSERT INTO users (username, password, profile, accounts, chat_history) VALUES (?, ?, ?, ?, ?)",
+                (
+                    username,
+                    user_data.get("password"),
+                    json.dumps(user_data.get("profile", {})),
+                    json.dumps(user_data.get("accounts", {})),
+                    json.dumps(user_data.get("chat_history", []))
+                )
+            )
+            
+            for tx in user_data.get("transactions", []):
+                cur.execute(
+                    "INSERT INTO transactions (username, date, amount, category, merchant) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        username,
+                        tx.get("date"),
+                        tx.get("amount"),
+                        tx.get("category"),
+                        tx.get("merchant")
+                    )
+                )
+        
+        conn.commit()
+    except Exception as e:
+        print(f"Migration error: {e}")
+    finally:
+        conn.close()
 
 
 def load_data():
-    """Load all users from the JSON file."""
-    # Try to load from primary path
-    if os.path.exists(JSON_PATH):
-        with open(JSON_PATH, "r") as f:
-            try:
-                data = json.load(f)
-                # If it's in old format (single user), convert to multi-user format
-                if "username" in data and not isinstance(data.get("username"), dict):
-                    return {data["username"]: data}
-                return data
-            except json.JSONDecodeError:
-                pass
+    """Load all users from SQLite."""
+    _init_db()
+    _migrate_json_to_db_if_needed()
     
-    # On Vercel, if primary path is empty, try to load from fallback (data/users.json)
-    if FALLBACK_JSON_PATH and os.path.exists(FALLBACK_JSON_PATH):
-        try:
-            with open(FALLBACK_JSON_PATH, "r") as f:
-                data = json.load(f)
-                # If it's in old format (single user), convert to multi-user format
-                if "username" in data and not isinstance(data.get("username"), dict):
-                    # Save to primary path for future requests
-                    save_data({data["username"]: data})
-                    return {data["username"]: data}
-                # Save to primary path for future requests
-                save_data(data)
-                return data
-        except (json.JSONDecodeError, IOError):
-            pass
+    conn = _get_conn()
+    cur = conn.cursor()
     
-    return {}
+    cur.execute("SELECT username, password, profile, accounts, chat_history FROM users")
+    users_dict = {}
+    
+    for row in cur.fetchall():
+        username = row["username"]
+        
+        # Get transactions for this user
+        cur.execute(
+            "SELECT date, amount, category, merchant FROM transactions WHERE username = ? ORDER BY id",
+            (username,)
+        )
+        transactions = [
+            {
+                "date": r["date"],
+                "amount": r["amount"],
+                "category": r["category"],
+                "merchant": r["merchant"]
+            }
+            for r in cur.fetchall()
+        ]
+        
+        users_dict[username] = {
+            "username": username,
+            "password": row["password"],
+            "profile": json.loads(row["profile"] or "{}"),
+            "accounts": json.loads(row["accounts"] or "{}"),
+            "transactions": transactions,
+            "chat_history": json.loads(row["chat_history"] or "[]")
+        }
+    
+    conn.close()
+    return users_dict
 
 
 def save_data(users_dict):
-    """Save all users to the JSON file."""
-    # Ensure directory exists
-    dir_path = os.path.dirname(JSON_PATH)
-    if dir_path:
-        os.makedirs(dir_path, exist_ok=True)
+    """Save all users to SQLite."""
+    _init_db()
+    conn = _get_conn()
+    cur = conn.cursor()
     
-    with open(JSON_PATH, "w") as f:
-        json.dump(users_dict, f, indent=2)
+    # Clear existing data
+    cur.execute("DELETE FROM transactions")
+    cur.execute("DELETE FROM users")
+    
+    # Insert all users and their transactions
+    for username, user_data in users_dict.items():
+        cur.execute(
+            "INSERT INTO users (username, password, profile, accounts, chat_history) VALUES (?, ?, ?, ?, ?)",
+            (
+                username,
+                user_data.get("password"),
+                json.dumps(user_data.get("profile", {})),
+                json.dumps(user_data.get("accounts", {})),
+                json.dumps(user_data.get("chat_history", []))
+            )
+        )
+        
+        for tx in user_data.get("transactions", []):
+            cur.execute(
+                "INSERT INTO transactions (username, date, amount, category, merchant) VALUES (?, ?, ?, ?, ?)",
+                (
+                    username,
+                    tx.get("date"),
+                    tx.get("amount"),
+                    tx.get("category"),
+                    tx.get("merchant")
+                )
+            )
+    
+    conn.commit()
+    conn.close()
 
 
 def load_user(username=None):
-    """
-    Load a specific user by username.
-    If no username is provided, return the first user.
-    """
+    """Load a specific user by username, or first user if no username provided."""
     data = load_data()
     
     if username:
@@ -73,7 +204,7 @@ def load_user(username=None):
 
 def save_user(username_or_data, user_data=None):
     """
-    Save a single user to the JSON file.
+    Save a single user to SQLite.
     Can be called as:
     - save_user(user_dict) where user_dict contains 'username' key
     - save_user(username, user_dict)
