@@ -21,9 +21,11 @@ if EDGE_CONFIG_RAW:
         # Token is embedded in URL like /.../ecfg_xxx?token=yyy
         EDGE_CONFIG_TOKEN = EDGE_CONFIG_RAW.split("token=")[1].split("&")[0]
         EDGE_CONFIG_URL = EDGE_CONFIG_RAW.split("?token=")[0].split("&token=")[0]
+        print(f"02DEBUG: EDGE_CONFIG_TOKEN = {EDGE_CONFIG_TOKEN[:20] if EDGE_CONFIG_TOKEN else 'None'}...")
     else:
         # Token is in a separate env var
         EDGE_CONFIG_TOKEN = os.environ.get("smart_dashboard-token")
+        print(f"01DEBUG: EDGE_CONFIG_TOKEN = {EDGE_CONFIG_TOKEN[:20] if EDGE_CONFIG_TOKEN else 'None'}...")
 
     # Normalize EDGE_CONFIG_URL: remove trailing /items and trailing slash
     EDGE_CONFIG_URL = EDGE_CONFIG_URL.rstrip('/')
