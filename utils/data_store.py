@@ -1,9 +1,15 @@
 import json
 import os
 import sqlite3
+import tempfile
 
 JSON_PATH = "data/users.json"
-DB_PATH = "data/users.db"
+
+# Use /tmp on Vercel (writable), otherwise use data/users.db
+if os.environ.get("VERCEL"):
+    DB_PATH = "/tmp/users.db"
+else:
+    DB_PATH = "data/users.db"
 
 
 def _get_conn():
