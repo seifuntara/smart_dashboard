@@ -130,8 +130,8 @@ def _edge_config_get():
         return {}
     
     try:
-        headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
-        resp = requests.get(f"{EDGE_CONFIG_URL}/items?key=app_data", headers=headers, timeout=10)
+        url = f"{EDGE_CONFIG_URL}/items?key=app_data&token={EDGE_CONFIG_TOKEN}"
+        resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
             result = json.loads(data.get("items", [{}])[0].get("value", "{}"))
@@ -153,7 +153,6 @@ def _edge_config_set(data):
         return
     
     try:
-        headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
         payload = {
             "items": [
                 {
@@ -162,9 +161,9 @@ def _edge_config_set(data):
                 }
             ]
         }
-        url = f"{EDGE_CONFIG_URL}/items"
-        print(f"Edge Config write: POST to {url}")
-        resp = requests.patch(url, json=payload, headers=headers, timeout=10)
+        url = f"{EDGE_CONFIG_URL}/items?token={EDGE_CONFIG_TOKEN}"
+        print(f"Edge Config write: PATCH to {url.split('?')[0]}/items?token=***")
+        resp = requests.patch(url, json=payload, timeout=10)
         
         if resp.status_code not in [200, 204]:
             print(f"Edge Config write failed: {resp.status_code} - {resp.text}")
