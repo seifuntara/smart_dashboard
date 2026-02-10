@@ -8,7 +8,17 @@ IS_VERCEL = os.environ.get("VERCEL") == "1"
 
 # Edge Config credentials (on Vercel)
 EDGE_CONFIG_URL = os.environ.get("EDGE_CONFIG")
-EDGE_CONFIG_TOKEN = os.environ.get("smart_dashboard-token")
+
+# Extract token from URL if embedded, otherwise use env var
+EDGE_CONFIG_TOKEN = None
+if EDGE_CONFIG_URL and "token=" in EDGE_CONFIG_URL:
+    # Token is embedded in URL like /xxx/token=yyy
+    EDGE_CONFIG_TOKEN = EDGE_CONFIG_URL.split("token=")[1].split("&")[0]
+    # Remove token from URL for clean API calls
+    EDGE_CONFIG_URL = EDGE_CONFIG_URL.split("?token=")[0].split("&token=")[0]
+else:
+    # Token is in a separate env var
+    EDGE_CONFIG_TOKEN = os.environ.get("smart_dashboard-token")
 
 # SQLite database (local only)
 SQLITE_DB = "data/smart_dashboard.db"
