@@ -1,117 +1,95 @@
 import json
 import os
-import sqlite3
-import requests
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # Detect environment
 IS_VERCEL = os.environ.get("VERCEL") == "1"
 
-# Edge Config credentials (on Vercel)
-EDGE_CONFIG_URL = os.environ.get("EDGE_CONFIG")
+# Database connection URL
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-EDGE_CONFIG_RAW = os.environ.get("EDGE_CONFIG")
-EDGE_CONFIG_URL = EDGE_CONFIG_RAW
-
-# Extract token from URL if embedded, otherwise use env var
-EDGE_CONFIG_TOKEN = None
-EDGE_CONFIG_USE_EDGE_HOST = False
-EDGE_CONFIG_USE_API = False
-if EDGE_CONFIG_RAW:
-    if "token=" in EDGE_CONFIG_RAW:
-        # Token is embedded in URL like /.../ecfg_xxx?token=yyy
-        EDGE_CONFIG_TOKEN = EDGE_CONFIG_RAW.split("token=")[1].split("&")[0]
-        EDGE_CONFIG_URL = EDGE_CONFIG_RAW.split("?token=")[0].split("&token=")[0]
-    else:
-        # Token is in a separate env var
-        EDGE_CONFIG_TOKEN = os.environ.get("EDGE_CONFIG_TOKEN")
-
-    # Normalize EDGE_CONFIG_URL: remove trailing /items and trailing slash
-    EDGE_CONFIG_URL = EDGE_CONFIG_URL.rstrip('/')
-    if EDGE_CONFIG_URL.endswith('/items'):
-        EDGE_CONFIG_URL = EDGE_CONFIG_URL[:-len('/items')]
-
-    # Detect which endpoint style was provided
-    if 'edge-config.vercel.com' in (EDGE_CONFIG_RAW or ''):
-        # Prefer converting public edge-config URL to the API URL using the ecfg id
-        try:
-            ecfg_id = EDGE_CONFIG_RAW.rstrip('/').split('/')[-1].split('?')[0]
-            if ecfg_id and ecfg_id.startswith('ecfg_'):
-                EDGE_CONFIG_URL = f"https://api.vercel.com/v1/edge-config/{ecfg_id}"
-                EDGE_CONFIG_USE_API = True
-            else:
-                EDGE_CONFIG_USE_EDGE_HOST = True
-        except Exception:
-            EDGE_CONFIG_USE_EDGE_HOST = True
-    elif 'api.vercel.com' in (EDGE_CONFIG_RAW or ''):
-        EDGE_CONFIG_USE_API = True
-    else:
-        # If the provided URL looks like an ecfg id, convert to API URL
-        if EDGE_CONFIG_URL and EDGE_CONFIG_URL.startswith('ecfg_'):
-            EDGE_CONFIG_URL = f"https://api.vercel.com/v1/edge-config/{EDGE_CONFIG_URL}"
-            EDGE_CONFIG_USE_API = True
-
-# (EDGE_CONFIG_URL normalized above)
-# SQLite database (local only)
-SQLITE_DB = "data/smart_dashboard.db"
+# Fallback paths for local development
 JSON_SOURCE_PATH = "data/users.json"
 
 
-def _get_sqlite_conn():
-    """Get SQLite connection."""
-    os.makedirs("data", exist_ok=True)
-    conn = sqlite3.connect(SQLITE_DB)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def _init_sqlite_db():
-    """Initialize SQLite schema."""
-    conn = _get_sqlite_conn()
-    cur = conn.cursor()
-    
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            username TEXT PRIMARY KEY,
-            password TEXT,
-            profile TEXT,
-            accounts TEXT,
-            chat_history TEXT
-        )
-    """)
-    
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT,
-            date TEXT,
-            amount REAL,
-            category TEXT,
-            merchant TEXT,
-            FOREIGN KEY (username) REFERENCES users(username)
-        )
-    """)
-    
-    conn.commit()
-    conn.close()
-
-
-def _migrate_json_to_sqlite_if_needed():
-    """Migrate data from JSON to SQLite on first run."""
-    conn = _get_sqlite_conn()
-    cur = conn.cursor()
-    
-    # Check if DB already has data
-    cur.execute("SELECT COUNT(*) as c FROM users")
-    if cur.fetchone()[0] > 0:
-        conn.close()
-        return
-    
-    # Try to load from JSON source
-    if not os.path.exists(JSON_SOURCE_PATH):
-        conn.close()
-        return
+def get_db_conn():
+    """Get Postgres connection."""
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL environment variable not set")
     
     try:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        return conn
+    except Exception as e:
+        print(f"Database connection error: {e}")
+        raise
+
+
+def init_db():
+    """Initialize Postgres database schema."""
+    conn = get_db_conn()
+    cur = conn.cursor()
+    
+    try:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                username TEXT PRIMARY KEY,
+                password TEXT,
+                profile JSONB DEFAULT '{}',
+                accounts JSONB DEFAULT '{}',
+                chat_history JSONB DEFAULT '[]'
+            )
+        """)
+        
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS transactions (
+                id SERIAL PRIMARY KEY,
+                username TEXT REFERENCES users(username) ON DELETE CASCADE,
+                date TEXT,
+                amount REAL,
+                category TEXT,
+                merchant TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Create index for better query performance
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_transactions_username 
+            ON transactions(username)
+        """)
+        
+        conn.commit()
+        print("Database schema initialized successfully")
+    except Exception as e:
+        conn.rollback()
+        print(f"Error initializing database: {e}")
+        raise
+    finally:
+        conn.close()
+
+
+def migrate_json_to_postgres_if_needed():
+    """Migrate data from JSON to Postgres on first run."""
+    conn = get_db_conn()
+    cur = conn.cursor()
+    
+    try:
+        # Check if DB already has data
+        cur.execute("SELECT COUNT(*) as count FROM users")
+        result = cur.fetchone()
+        if result['count'] > 0:
+            conn.close()
+            return
+        
+        # Try to load from JSON source
+        if not os.path.exists(JSON_SOURCE_PATH):
+            conn.close()
+            return
+        
+        print("Migrating data from JSON to Postgres...")
+        
         with open(JSON_SOURCE_PATH, "r") as f:
             json_data = json.load(f)
         
@@ -124,7 +102,11 @@ def _migrate_json_to_sqlite_if_needed():
         # Insert into DB
         for username, user_data in users_dict.items():
             cur.execute(
-                "INSERT INTO users (username, password, profile, accounts, chat_history) VALUES (?, ?, ?, ?, ?)",
+                """
+                INSERT INTO users (username, password, profile, accounts, chat_history) 
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (username) DO NOTHING
+                """,
                 (
                     username,
                     user_data.get("password"),
@@ -136,7 +118,10 @@ def _migrate_json_to_sqlite_if_needed():
             
             for tx in user_data.get("transactions", []):
                 cur.execute(
-                    "INSERT INTO transactions (username, date, amount, category, merchant) VALUES (?, ?, ?, ?, ?)",
+                    """
+                    INSERT INTO transactions (username, date, amount, category, merchant) 
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
                     (
                         username,
                         tx.get("date"),
@@ -147,6 +132,7 @@ def _migrate_json_to_sqlite_if_needed():
                 )
         
         conn.commit()
+        print(f"Successfully migrated {len(users_dict)} users to Postgres")
     except Exception as e:
         print(f"Migration error: {e}")
         conn.rollback()
@@ -154,185 +140,63 @@ def _migrate_json_to_sqlite_if_needed():
         conn.close()
 
 
-def _edge_config_get():
-    """Fetch data from Vercel Edge Config."""
-    if not EDGE_CONFIG_URL or not EDGE_CONFIG_TOKEN:
-        print("WARNING: EDGE_CONFIG_URL or EDGE_CONFIG_TOKEN not set")
-        return {}
-    
-    try:
-        if EDGE_CONFIG_USE_EDGE_HOST:
-            url = f"{EDGE_CONFIG_URL}/items?key=app_data&token={EDGE_CONFIG_TOKEN}"
-            resp = requests.get(url, timeout=10)
-        elif EDGE_CONFIG_USE_API:
-            url = f"{EDGE_CONFIG_URL}/items?key=app_data"
-            headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
-            resp = requests.get(url, headers=headers, timeout=10)
-        else:
-            url_api = f"{EDGE_CONFIG_URL}/items?key=app_data"
-            headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
-            resp = requests.get(url_api, headers=headers, timeout=10)
-            if resp.status_code == 404 or resp.status_code == 403:
-                url_edge = f"{EDGE_CONFIG_URL}/items?key=app_data&token={EDGE_CONFIG_TOKEN}"
-                resp = requests.get(url_edge, timeout=10)
-        
-        if resp.status_code == 200:
-            data = resp.json()
-            
-            # Handle different response formats
-            if isinstance(data, list):
-                # API returns list directly - find app_data key
-                app_data_item = None
-                for item in data:
-                    if isinstance(item, dict) and item.get('key') == 'app_data':
-                        app_data_item = item
-                        break
-                
-                if app_data_item and "value" in app_data_item:
-                    result = json.loads(app_data_item["value"])
-                else:
-                    result = {}
-            elif isinstance(data, dict) and "items" in data:
-                # Edge Config host returns dict with items
-                result = json.loads(data["items"][0].get("value", "{}"))
-            else:
-                result = {}
-            
-            print(f"Edge Config read: got {len(result)} users")
-            return result
-        
-        print(f"Edge Config read failed: {resp.status_code}")
-        return {}
-    except Exception as e:
-        print(f"Edge Config read error: {e}")
-        import traceback
-        traceback.print_exc()
-        return {}
-
-
-def _edge_config_set(data):
-    """Save data to Vercel Edge Config."""
-    if not EDGE_CONFIG_URL or not EDGE_CONFIG_TOKEN:
-        print("WARNING: EDGE_CONFIG_URL or EDGE_CONFIG_TOKEN not set")
-        print(f"  EDGE_CONFIG_URL={EDGE_CONFIG_URL}")
-        print(f"  EDGE_CONFIG_TOKEN={'*' * 10 if EDGE_CONFIG_TOKEN else 'None'}")
-        return
-    
-    try:
-        payload = {
-            "items": [
-                {
-                    "key": "app_data",
-                    "value": json.dumps(data),
-                    "operation": "upsert"
-                }
-            ]
-        }
-        if EDGE_CONFIG_USE_EDGE_HOST:
-            url = f"{EDGE_CONFIG_URL}/items?token={EDGE_CONFIG_TOKEN}"
-            print(f"Edge Config write: PATCH to {EDGE_CONFIG_URL}/items?token=***")
-            resp = requests.patch(url, json=payload, timeout=10)
-        elif EDGE_CONFIG_USE_API:
-            url = f"{EDGE_CONFIG_URL}/items"
-            headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
-            print(f"Edge Config write: PATCH to {EDGE_CONFIG_URL}/items with Authorization header")
-            resp = requests.patch(url, json=payload, headers=headers, timeout=10)
-        else:
-            # Fallback: try API header then edge-host
-            url_api = f"{EDGE_CONFIG_URL}/items"
-            headers = {"Authorization": f"Bearer {EDGE_CONFIG_TOKEN}"}
-            resp = requests.patch(url_api, json=payload, headers=headers, timeout=10)
-            if resp.status_code == 404 or resp.status_code == 403:
-                url_edge = f"{EDGE_CONFIG_URL}/items?token={EDGE_CONFIG_TOKEN}"
-                print(f"Edge Config write fallback: PATCH to {EDGE_CONFIG_URL}/items?token=***")
-                resp = requests.patch(url_edge, json=payload, timeout=10)
-        
-        if resp.status_code not in [200, 204]:
-            print(f"Edge Config write failed: {resp.status_code} - {resp.text}")
-        else:
-            print(f"Edge Config updated: {len(data)} users saved")
-            
-    except Exception as e:
-        print(f"Edge Config write error: {e}")
-
-
 def load_data():
-    """Load all users from SQLite (local) or Edge Config (Vercel)."""
-    if IS_VERCEL:
-        print("Loading from Edge Config...")
-        data = _edge_config_get()
-        
-        # If Edge Config is empty, initialize from JSON
-        if not data and os.path.exists(JSON_SOURCE_PATH):
-            print("Edge Config empty, initializing from JSON...")
-            try:
-                with open(JSON_SOURCE_PATH, "r") as f:
-                    json_data = json.load(f)
-                
-                # Handle old single-user format
-                if "username" in json_data and not isinstance(json_data.get("username"), dict):
-                    data = {json_data["username"]: json_data}
-                else:
-                    data = json_data
-                
-                print(f"Loaded {len(data)} users from JSON, saving to Edge Config...")
-                # Save to Edge Config
-                _edge_config_set(data)
-            except Exception as e:
-                print(f"Error initializing Edge Config from JSON: {e}")
-        
-        return data
-    
-    # Local: use SQLite
-    _init_sqlite_db()
-    _migrate_json_to_sqlite_if_needed()
-    
-    conn = _get_sqlite_conn()
+    """Load all users from Postgres."""
+    conn = get_db_conn()
     cur = conn.cursor()
     
-    cur.execute("SELECT username, password, profile, accounts, chat_history FROM users")
-    users_dict = {}
-    
-    for row in cur.fetchall():
-        username = row["username"]
+    try:
+        cur.execute("""
+            SELECT username, password, profile, accounts, chat_history 
+            FROM users
+        """)
         
-        # Get transactions for this user
-        cur.execute(
-            "SELECT date, amount, category, merchant FROM transactions WHERE username = ? ORDER BY id",
-            (username,)
-        )
-        transactions = [
-            {
-                "date": r["date"],
-                "amount": r["amount"],
-                "category": r["category"],
-                "merchant": r["merchant"]
+        users_dict = {}
+        
+        for row in cur.fetchall():
+            username = row["username"]
+            
+            # Get transactions for this user
+            cur.execute(
+                """
+                SELECT date, amount, category, merchant 
+                FROM transactions 
+                WHERE username = %s 
+                ORDER BY id
+                """,
+                (username,)
+            )
+            
+            transactions = [
+                {
+                    "date": r["date"],
+                    "amount": r["amount"],
+                    "category": r["category"],
+                    "merchant": r["merchant"]
+                }
+                for r in cur.fetchall()
+            ]
+            
+            users_dict[username] = {
+                "username": username,
+                "password": row["password"],
+                "profile": row["profile"] if isinstance(row["profile"], dict) else {},
+                "accounts": row["accounts"] if isinstance(row["accounts"], dict) else {},
+                "transactions": transactions,
+                "chat_history": row["chat_history"] if isinstance(row["chat_history"], list) else []
             }
-            for r in cur.fetchall()
-        ]
         
-        users_dict[username] = {
-            "username": username,
-            "password": row["password"],
-            "profile": json.loads(row["profile"] or "{}"),
-            "accounts": json.loads(row["accounts"] or "{}"),
-            "transactions": transactions,
-            "chat_history": json.loads(row["chat_history"] or "[]")
-        }
-    
-    conn.close()
-    return users_dict
+        return users_dict
+    except Exception as e:
+        print(f"Error loading data: {e}")
+        return {}
+    finally:
+        conn.close()
 
 
 def save_data(users_dict):
-    """Save all users to SQLite (local) or Edge Config (Vercel)."""
-    if IS_VERCEL:
-        _edge_config_set(users_dict)
-        return
-    
-    # Local: use SQLite
-    _init_sqlite_db()
-    conn = _get_sqlite_conn()
+    """Save all users to Postgres."""
+    conn = get_db_conn()
     cur = conn.cursor()
     
     try:
@@ -343,7 +207,10 @@ def save_data(users_dict):
         # Insert all users and their transactions
         for username, user_data in users_dict.items():
             cur.execute(
-                "INSERT INTO users (username, password, profile, accounts, chat_history) VALUES (?, ?, ?, ?, ?)",
+                """
+                INSERT INTO users (username, password, profile, accounts, chat_history) 
+                VALUES (%s, %s, %s, %s, %s)
+                """,
                 (
                     username,
                     user_data.get("password"),
@@ -355,7 +222,10 @@ def save_data(users_dict):
             
             for tx in user_data.get("transactions", []):
                 cur.execute(
-                    "INSERT INTO transactions (username, date, amount, category, merchant) VALUES (?, ?, ?, ?, ?)",
+                    """
+                    INSERT INTO transactions (username, date, amount, category, merchant) 
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
                     (
                         username,
                         tx.get("date"),
@@ -366,9 +236,11 @@ def save_data(users_dict):
                 )
         
         conn.commit()
+        print(f"Successfully saved {len(users_dict)} users to Postgres")
     except Exception as e:
         print(f"Save error: {e}")
         conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -407,3 +279,12 @@ def save_user(username_or_data, user_data=None):
     if username:
         data[username] = user_dict
         save_data(data)
+
+
+# Initialize database on import
+if DATABASE_URL:
+    try:
+        init_db()
+        migrate_json_to_postgres_if_needed()
+    except Exception as e:
+        print(f"Warning: Could not initialize database: {e}")
