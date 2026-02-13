@@ -8,7 +8,7 @@
 A personal finance dashboard application with AI-powered chat assistance, built with Flask and deployed on Vercel with Neon Postgres database.
 
 🔗 **[Deployed Web](https://smartdashboard-five.vercel.app/)**
-*login username **vedika** and password **test123** to test existing account
+(login username **vedika** and password **test123** to test existing account)
 
 ## Features
 
