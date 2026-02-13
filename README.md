@@ -1,4 +1,4 @@
-# Smart Dashboard
+# AN6001 Group Project: Smart Dashboard
 
 ![Vercel](https://img.shields.io/badge/vercel-%23000000.svg?style=for-the-badge&logo=vercel&logoColor=white)
 ![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
@@ -29,14 +29,34 @@ A personal finance dashboard application with AI-powered chat assistance, built 
 
 ```
 .
-├── app.py                  # Main Flask application
-├── data_store.py          # Database operations and data management
-├── requirements.txt       # Python dependencies
-├── vercel.json           # Vercel deployment configuration
+├── app.py                        # Main Flask application
+├── requirements.txt              # Python dependencies
+├── .gitignore                    # Git ignore file
+├── README.md                     # Project documentation
+├── VERCEL_POSTGRES_SETUP.md      # Vercel Postgres setup guide
 ├── data/
-│   └── users.json        # Initial data (migrated to Postgres on first run)
-├── templates/            # HTML templates
-└── static/              # CSS, JavaScript, images
+│   ├── chat_history.csv          # Chat history data
+│   ├── users.csv                 # User data (CSV format)
+│   ├── users.db                  # SQLite database (local development)
+│   └── users.json                # Initial data (migrated to Postgres on first run)
+├── static/
+│   ├── analytics.js              # Analytics JavaScript
+│   ├── chatbot.js                # Chatbot functionality
+│   ├── style.css                 # Main stylesheet
+│   └── images/                   # Image assets
+├── templates/
+│   ├── add_transaction.html      # Add transaction page
+│   ├── analytics.html            # Analytics dashboard
+│   ├── dashboard.html            # Main dashboard
+│   └── login.html                # Login page
+└── utils/                        # Utility functions
+    ├── analytics_context.py      # Analytics context processor
+    ├── auth.py                   # Authentication utilities
+    ├── chatbot.py                # Chatbot logic
+    ├── data_store.py             # Database operations and data management
+    ├── finance.py                # Finance calculations
+    ├── llm_test.py               # LLM testing utilities
+    └── what_if.py                # What-if scenario analysis
 ```
 
 ## Setup
@@ -153,9 +173,11 @@ On first run, the application will:
 
 ## API Functions
 
-### Data Store (`data_store.py`)
+### Data Store (`utils/data_store.py`)
 
 ```python
+from utils.data_store import load_data, load_user, save_user, save_data
+
 # Load all users
 users = load_data()
 
