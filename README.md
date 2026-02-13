@@ -11,11 +11,11 @@ A personal finance dashboard application with AI-powered chat assistance, built 
 
 ## Features
 
-- 💰 **Account Management** - Track multiple bank accounts and balances
-- 📊 **Transaction Tracking** - Monitor spending by category and merchant
-- 💬 **AI Chat Assistant** - Get financial insights and assistance
-- 👤 **User Profiles** - Personalized dashboard experience
-- 🔒 **Secure Authentication** - User login and session management
+- 🔐 **User Authentication & Session Management** - Handles secure registration and login using Flask sessions
+- 💬 **Chatbot Assistant** - Processes natural language messages via the chat route
+- 💰 **Transaction Management** - Allows users to add and store financial records (date, amount, category, merchant)
+- 📊 **Financial Analytics Dashboard** - Aggregates data for category and monthly spending views
+- 🔮 **What-If Spending Simulation** - Predicts financial outcomes based on hypothetical budget changes
 
 ## Tech Stack
 
